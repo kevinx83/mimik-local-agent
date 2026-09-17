@@ -52,10 +52,10 @@ python3 -m unittest -v
 The data flow is deliberately small:
 
 1. `LocalAgent` owns the system prompt and conversation history.
-2. Each user prompt is appended to the history and sent to the local model.
-3. The model can choose the explicit action format `ACTION: word_count("text")`.
+2. Each user prompt is appended to the history. Normal prompts are sent directly with streaming enabled.
+3. Word-count requests enter the tool path: the model can choose the explicit action format `ACTION: word_count("text")`.
 4. The agent parses that action, runs its local `word_count` tool, and sends the tool result back to the model for a final answer. This is one bounded tool round, so the loop cannot run away.
-5. For the final answer, `LocalInferenceClient` either reads normal JSON or parses Server-Sent Events and the CLI prints each yielded chunk immediately.
+5. `LocalInferenceClient` either reads normal JSON or parses Server-Sent Events, and the CLI prints each yielded chunk immediately.
 6. The assistant response is appended to history, giving the next request conversational context.
 
 I chose raw API calls instead of LangChain or another orchestration framework because this assignment has one model, one endpoint, and one small tool loop. The smaller dependency surface makes the connection, action parsing, and tool result visible, easier to debug, and easier to run on a machine hosting a local model. A framework could be added later if the agent grows to include tools, retrieval, or multiple agents.

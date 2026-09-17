@@ -121,26 +121,34 @@ class LocalAgent:
 
     def ask_stream(self, prompt: str, stream: bool = True) -> Iterator[str]:
         self.messages.append({"role": "user", "content": prompt})
-        decision = self.client.chat(self.messages, stream=False)
-        action = self._parse_action(decision)
-        if action:
-            self.messages.append({"role": "assistant", "content": decision})
-            self.messages.append({"role": "tool", "content": self._run_tool(action)})
-            result = self.client.chat(self.messages, stream=stream)
-            if stream:
-                chunks = []
-                for chunk in result:
-                    chunks.append(chunk)
-                    yield chunk
-                answer = "".join(chunks)
+        if self._may_need_tool(prompt):
+            decision = self.client.chat(self.messages, stream=False)
+            action = self._parse_action(decision)
+            if action:
+                self.messages.append({"role": "assistant", "content": decision})
+                self.messages.append({"role": "tool", "content": self._run_tool(action)})
+                result = self.client.chat(self.messages, stream=stream)
             else:
-                answer = result
-                yield answer
+                result = decision
         else:
-            answer = decision
+            result = self.client.chat(self.messages, stream=stream)
+
+        if stream and not isinstance(result, str):
+            chunks = []
+            for chunk in result:
+                chunks.append(chunk)
+                yield chunk
+            answer = "".join(chunks)
+        else:
+            answer = result
             yield answer
 
         self.messages.append({"role": "assistant", "content": answer})
+
+    @staticmethod
+    def _may_need_tool(prompt: str) -> bool:
+        prompt = prompt.lower()
+        return "word count" in prompt or "count words" in prompt or "how many words" in prompt
 
     @classmethod
     def _parse_action(cls, response: str) -> str | None:
