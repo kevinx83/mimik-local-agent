@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any, Iterator
@@ -79,7 +80,10 @@ class LocalInferenceClient:
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
                 content = delta.get("content")
                 if content:
                     yield content
@@ -95,7 +99,9 @@ class LocalInferenceClient:
 
 
 class LocalAgent:
-    """Conversation agent that keeps context and delegates generation to mimik."""
+    """Conversation agent with one local tool and a bounded action loop."""
+
+    ACTION_PATTERN = re.compile(r'^ACTION:\s*word_count\((?P<quote>["\'])(?P<text>.*?)\1\)\s*$', re.DOTALL)
 
     def __init__(self, client: LocalInferenceClient):
         self.client = client
@@ -104,20 +110,46 @@ class LocalAgent:
                 "role": "system",
                 "content": (
                     "You are a concise local AI assistant. Explain your reasoning briefly "
-                    "and provide practical answers."
+                    "and provide practical answers. If counting words would help, respond "
+                    'with exactly ACTION: word_count("text to count") and no other text.'
                 ),
             }
         ]
 
     def ask(self, prompt: str, stream: bool = True) -> str:
+        return "".join(self.ask_stream(prompt, stream=stream))
+
+    def ask_stream(self, prompt: str, stream: bool = True) -> Iterator[str]:
         self.messages.append({"role": "user", "content": prompt})
-        result = self.client.chat(self.messages, stream=stream)
-        if stream:
-            answer = "".join(result)
+        decision = self.client.chat(self.messages, stream=False)
+        action = self._parse_action(decision)
+        if action:
+            self.messages.append({"role": "assistant", "content": decision})
+            self.messages.append({"role": "tool", "content": self._run_tool(action)})
+            result = self.client.chat(self.messages, stream=stream)
+            if stream:
+                chunks = []
+                for chunk in result:
+                    chunks.append(chunk)
+                    yield chunk
+                answer = "".join(chunks)
+            else:
+                answer = result
+                yield answer
         else:
-            answer = result
+            answer = decision
+            yield answer
+
         self.messages.append({"role": "assistant", "content": answer})
-        return answer
+
+    @classmethod
+    def _parse_action(cls, response: str) -> str | None:
+        match = cls.ACTION_PATTERN.match(response.strip())
+        return match.group("text") if match else None
+
+    @staticmethod
+    def _run_tool(text: str) -> str:
+        return f"word_count({len(text.split())})"
 
 
 def main() -> int:
@@ -132,7 +164,9 @@ def main() -> int:
         if args.no_stream:
             print(agent.ask(prompt, stream=False))
         else:
-            print(agent.ask(prompt, stream=True), end="\n")
+            for chunk in agent.ask_stream(prompt, stream=True):
+                print(chunk, end="", flush=True)
+            print()
         return 0
 
     print("mimik local agent. Type /exit to quit, /reset to clear context.")
@@ -152,7 +186,9 @@ def main() -> int:
             continue
         try:
             print("assistant> ", end="", flush=True)
-            print(agent.ask(prompt), flush=True)
+            for chunk in agent.ask_stream(prompt):
+                print(chunk, end="", flush=True)
+            print(flush=True)
         except RuntimeError as error:
             print(f"\nerror: {error}", file=sys.stderr)
             return 1

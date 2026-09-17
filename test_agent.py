@@ -1,4 +1,3 @@
-import io
 import json
 import unittest
 from unittest.mock import patch
@@ -52,6 +51,7 @@ class LocalInferenceClientTests(unittest.TestCase):
     @patch("agent.urlopen")
     def test_streaming_response_yields_text_deltas(self, urlopen):
         urlopen.return_value = FakeResponse(
+            b'data: {"choices":[]}\n\n'
             b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
             b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n'
             b"data: [DONE]\n\n"
@@ -74,12 +74,38 @@ class LocalAgentTests(unittest.TestCase):
         self.assertEqual(
             client.messages,
             [
-                {"role": "system", "content": "You are a concise local AI assistant. Explain your reasoning briefly and provide practical answers."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a concise local AI assistant. Explain your reasoning briefly "
+                        "and provide practical answers. If counting words would help, respond "
+                        'with exactly ACTION: word_count("text to count") and no other text.'
+                    ),
+                },
                 {"role": "user", "content": "question"},
             ],
         )
         self.assertFalse(client.stream)
         self.assertEqual(agent.messages[-1], {"role": "assistant", "content": "answer"})
+
+    def test_agent_executes_word_count_action_and_uses_tool_result(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def chat(self, messages, stream):
+                self.calls.append((list(messages), stream))
+                if len(self.calls) == 1:
+                    return 'ACTION: word_count("one two three")'
+                return "That is 3 words."
+
+        client = FakeClient()
+        agent = LocalAgent(client)
+
+        self.assertEqual(agent.ask("How many words?", stream=False), "That is 3 words.")
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(client.calls[1][0][-1], {"role": "tool", "content": "word_count(3)"})
+        self.assertFalse(client.calls[1][1])
 
 
 if __name__ == "__main__":

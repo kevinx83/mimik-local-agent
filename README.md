@@ -37,7 +37,7 @@ Interactive conversation:
 python3 agent.py
 ```
 
-Use `/reset` to start a fresh conversation and `/exit` to quit. Add `--no-stream` to wait for the complete response instead of rendering token deltas as they arrive.
+Use `/reset` to start a fresh conversation and `/exit` to quit. The interactive mode writes response chunks as they arrive. Add `--no-stream` to wait for the complete response.
 
 ## Tests
 
@@ -52,12 +52,13 @@ python3 -m unittest -v
 The data flow is deliberately small:
 
 1. `LocalAgent` owns the system prompt and conversation history.
-2. Each user prompt is appended to the history.
-3. `LocalInferenceClient` sends that history to `/chat/completions` with the model and bearer token.
-4. The client either reads a normal JSON completion or parses Server-Sent Events when streaming is enabled.
-5. The assistant response is appended to history, giving the next request conversational context.
+2. Each user prompt is appended to the history and sent to the local model.
+3. The model can choose the explicit action format `ACTION: word_count("text")`.
+4. The agent parses that action, runs its local `word_count` tool, and sends the tool result back to the model for a final answer. This is one bounded tool round, so the loop cannot run away.
+5. For the final answer, `LocalInferenceClient` either reads normal JSON or parses Server-Sent Events and the CLI prints each yielded chunk immediately.
+6. The assistant response is appended to history, giving the next request conversational context.
 
-I chose raw API calls instead of LangChain or another orchestration framework because this assignment has one model, one endpoint, and one conversation loop. The smaller dependency surface makes the connection behavior visible, easier to debug, and easier to run on a machine hosting a local model. A framework could be added later if the agent grows to include tools, retrieval, or multiple agents.
+I chose raw API calls instead of LangChain or another orchestration framework because this assignment has one model, one endpoint, and one small tool loop. The smaller dependency surface makes the connection, action parsing, and tool result visible, easier to debug, and easier to run on a machine hosting a local model. A framework could be added later if the agent grows to include tools, retrieval, or multiple agents.
 
 ## Traceable endpoint
 
